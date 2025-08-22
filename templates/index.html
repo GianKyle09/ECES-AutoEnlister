@@ -9,33 +9,43 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             background-color: #f0f2f5;
             color: #333;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
             margin: 0;
+            padding: 1rem;
         }
-        .container {
+        .main-container {
+            display: flex;
+            gap: 1.5rem;
+            width: 100%;
+            max-width: 1600px;
+            margin: auto;
+        }
+        .control-panel {
+            flex: 1;
+            min-width: 400px;
             background-color: #fff;
             padding: 2rem;
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            width: 100%;
-            max-width: 600px;
         }
-        h1 {
+        .dashboard {
+            flex: 2;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        .table-container {
+            background-color: #fff;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        h1, h2 {
             text-align: center;
             color: #006A4E;
-            margin-bottom: 1.5rem;
+            margin-top: 0;
         }
-        .form-group {
-            margin-bottom: 1rem;
-        }
-        label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-        }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; margin-bottom: 0.5rem; font-weight: 600; }
         input[type="text"], input[type="password"], input[type="email"] {
             width: 100%;
             padding: 0.75rem;
@@ -55,65 +65,65 @@
             cursor: pointer;
             transition: background-color 0.2s;
         }
-        button:hover {
-            background-color: #0056b3;
-        }
-        button:disabled {
-            background-color: #a0a0a0;
-            cursor: not-allowed;
-        }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #a0a0a0; cursor: not-allowed; }
         #terminal {
             background-color: #2b2b2b;
             color: #f1f1f1;
             padding: 1rem;
             border-radius: 4px;
             margin-top: 1.5rem;
-            height: 300px;
+            height: 35vh;
             overflow-y: auto;
             font-family: 'Menlo', 'Consolas', monospace;
             font-size: 0.875rem;
-            white-space: pre-wrap;
-            word-wrap: break-word;
         }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; font-size: 0.8rem; }
+        th { background-color: #f8f9fa; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 </head>
 <body>
-    <div class="container">
-        <h1>ECES Auto-Enlister</h1>
-        <form id="credentials-form">
-            <div class="form-group">
-                <label for="id_number">ID Number</label>
-                <input type="text" id="id_number" name="id_number" required>
+    <div class="main-container">
+        <div class="control-panel">
+            <h1>ECES Auto-Enlister</h1>
+            <form id="credentials-form">
+                <div class="form-group">
+                    <label for="id_number">ID Number</label>
+                    <input type="text" id="id_number" name="id_number" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                <div class="form-group">
+                    <label for="receiver_email">Notification Email</label>
+                    <input type="email" id="receiver_email" name="receiver_email" required>
+                </div>
+                <div class="form-group">
+                    <label for="license_key">License Key</label>
+                    <input type="text" id="license_key" name="license_key" required>
+                </div>
+                <div class="button-group" style="display: flex; gap: 10px;">
+                    <button type="submit" id="start-button" style="flex-grow: 1;">Start Sniper</button>
+                    <button type="button" id="stop-button" style="flex-grow: 1; background-color: #dc3545;" disabled>Stop Sniper</button>
+                </div>
+            </form>
+            <div id="status-area" style="text-align: center; margin-top: 1.5rem; font-weight: 600;"></div>
+            <div id="terminal">
+                <p>Terminal output will appear here...</p>
             </div>
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" required>
-            </div>
-            <div class="form-group">
-                <label for="receiver_email">Notification Email</label>
-                <input type="email" id="receiver_email" name="receiver_email" required>
-            </div>
-            <div class="form-group">
-                <label for="license_key">License Key</label>
-                <input type="text" id="license_key" name="license_key" required>
-            </div>
-            <div class="button-group" style="display: flex; gap: 10px;">
-                <button type="submit" id="start-button" style="flex-grow: 1;">Start Sniper</button>
-                <button type="button" id="stop-button" style="flex-grow: 1; background-color: #dc3545;" disabled>Stop Sniper</button>
-            </div>
-        </form>
-        <div id="status-area" style="text-align: center; margin-top: 1.5rem; font-weight: 600;"></div>
-        
-        <div class="dashboard" style="margin-top: 2rem;">
-            <h2>Shopping Cart</h2>
-            <div id="shopping-cart-table"></div>
-            <h2 style="margin-top: 1.5rem;">Class Schedule</h2>
-            <div id="class-schedule-table"></div>
         </div>
-
-        <div id="terminal">
-            <p>Terminal output will appear here...</p>
+        <div class="dashboard">
+            <div class="table-container">
+                <h2>Shopping Cart</h2>
+                <div id="shopping-cart-table"></div>
+            </div>
+            <div class="table-container">
+                <h2>Class Schedule</h2>
+                <div id="class-schedule-table"></div>
+            </div>
         </div>
     </div>
 

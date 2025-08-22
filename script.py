@@ -160,8 +160,8 @@ def main(id_number, password, receiver_email):
             soup = BeautifulSoup(get_driver().page_source, 'html.parser')
             
             # 3. Parse both tables
-            shopping_cart_data = parse_table(soup, 'SSR_REGFORM_VW$scroll$0')
-            class_schedule_data = parse_table(soup, 'STDNT_ENRL_SSV1$scroll$0')
+            shopping_cart_data = parse_shopping_cart(soup)
+            class_schedule_data = parse_class_schedule(soup)
 
             # 4. Send the structured data to the frontend
             table_data = {
@@ -208,32 +208,61 @@ def main(id_number, password, receiver_email):
             print("A timeout occurred. Resetting navigation...", flush=True)
             navigate_to_shopping_cart()
 
-def parse_table(soup, table_id):
-    """Parses a specific table from the page soup into a list of dictionaries."""
-    table = soup.find('table', id=table_id)
+def parse_shopping_cart(soup):
+    """Parses the shopping cart table from the page soup."""
+    table = soup.find('table', id='SSR_REGFORM_VW$scroll$0')
     if not table:
         return []
-
-    headers = [th.get_text(strip=True) for th in table.find_all('th')]
-    data = []
     
-    # Find all data rows, which have a specific ID structure
-    rows = table.find_all('tr', id=lambda x: x and x.startswith('tr' + table_id.split('$')[0]))
+    headers = [th.get_text(strip=True).lower() for th in table.select('th[id^="thSSR_REGFORM_VW"]')]
+    data = []
+    rows = table.find_all('tr', id=lambda x: x and x.startswith('trSSR_REGFORM_VW$0_'))
     
     for row in rows:
         cells = row.find_all('td')
         row_data = {}
         for i, cell in enumerate(cells):
             header = headers[i] if i < len(headers) else f'column_{i+1}'
-            # Special handling for the status column to get the alt text from the image
-            if 'Status' in header:
+            if 'status' in header:
                 img = cell.find('img')
-                row_data[header.lower()] = img['alt'] if img and img.has_attr('alt') else 'N/A'
+                row_data[header] = img['alt'] if img and img.has_attr('alt') else 'N/A'
             else:
-                row_data[header.lower()] = cell.get_text(strip=True)
+                row_data[header] = cell.get_text(strip=True)
         data.append(row_data)
-        
     return data
+
+def parse_class_schedule(soup):
+    """Robustly finds and parses the class schedule table."""
+    try:
+        # Find the header that marks the beginning of the class schedule section
+        schedule_header = soup.find(lambda tag: tag.name in ['div', 'span'] and "My AY 2025-2026, Term 1 Class Schedule" in tag.get_text())
+        if not schedule_header:
+            return []
+        
+        # Find the first table that appears immediately after this header
+        table = schedule_header.find_next('table')
+        if not table:
+            return []
+
+        headers = ['class', 'description', 'days/times', 'room', 'instructor', 'units', 'status']
+        data = []
+        rows = table.find_all('tr', id=lambda x: x and x.startswith('trSTDNT_ENRL_SSV1$0_'))
+
+        for row in rows:
+            cells = row.find_all('td')
+            row_data = {}
+            for i, cell in enumerate(cells):
+                header = headers[i] if i < len(headers) else f'column_{i+1}'
+                if 'status' in header:
+                    img = cell.find('img')
+                    row_data[header] = img['alt'] if img and img.has_attr('alt') else 'N/A'
+                else:
+                    row_data[header] = cell.get_text(strip=True)
+            data.append(row_data)
+        return data
+    except Exception as e:
+        print(f"Error parsing class schedule: {e}", flush=True)
+        return []
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='AnimoSys Auto-Enlister')
