@@ -1,0 +1,7 @@
+Flask
+Flask-SocketIO
+beautifulsoup4
+gunicorn
+eventlet
+selenium
+helium

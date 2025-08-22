@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AnimoSys Auto-Enlister</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: #fff;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 600px;
+        }
+        h1 {
+            text-align: center;
+            color: #006A4E;
+            margin-bottom: 1.5rem;
+        }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+        input[type="text"], input[type="password"], input[type="email"] {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 0.75rem;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #a0a0a0;
+            cursor: not-allowed;
+        }
+        #terminal {
+            background-color: #2b2b2b;
+            color: #f1f1f1;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-top: 1.5rem;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Menlo', 'Consolas', monospace;
+            font-size: 0.875rem;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>AnimoSys Class Sniper</h1>
+        <form id="credentials-form">
+            <div class="form-group">
+                <label for="id_number">ID Number</label>
+                <input type="text" id="id_number" name="id_number" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <div class="form-group">
+                <label for="receiver_email">Notification Email</label>
+                <input type="email" id="receiver_email" name="receiver_email" required>
+            </div>
+            <div class="form-group">
+                <label for="license_key">License Key</label>
+                <input type="text" id="license_key" name="license_key" required>
+            </div>
+            <div class="button-group" style="display: flex; gap: 10px;">
+                <button type="submit" id="start-button" style="flex-grow: 1;">Start Sniper</button>
+                <button type="button" id="stop-button" style="flex-grow: 1; background-color: #dc3545;" disabled>Stop Sniper</button>
+            </div>
+        </form>
+        <div id="status-area" style="text-align: center; margin-top: 1.5rem; font-weight: 600;"></div>
+        <div id="terminal">
+            <p>Terminal output will appear here...</p>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const socket = io();
+            const form = document.getElementById('credentials-form');
+            const startButton = document.getElementById('start-button');
+            const stopButton = document.getElementById('stop-button');
+            const terminal = document.getElementById('terminal');
+            const statusArea = document.getElementById('status-area');
+
+            function setRunningState(isRunning) {
+                startButton.disabled = isRunning;
+                stopButton.disabled = !isRunning;
+                startButton.textContent = isRunning ? 'Running...' : 'Start Sniper';
+            }
+
+            socket.on('connect', () => {
+                console.log('Connected to server');
+                terminal.innerHTML += '<p>Successfully connected to the server.</p>';
+            });
+
+            socket.on('terminal_output', (msg) => {
+                const line = document.createElement('p');
+                line.textContent = msg.data;
+                terminal.appendChild(line);
+                terminal.scrollTop = terminal.scrollHeight; // Auto-scroll
+            });
+
+            socket.on('license_status', (data) => {
+                if (data.time_remaining === 'Lifetime') {
+                    statusArea.textContent = 'License: Lifetime';
+                } else if (data.time_remaining !== null) {
+                    statusArea.textContent = `Time Remaining: ${data.time_remaining}`;
+                } else {
+                    statusArea.textContent = '';
+                }
+            });
+
+            socket.on('script_finished', (msg) => {
+                console.log('Script finished with code:', msg.code);
+                setRunningState(false);
+            });
+
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                setRunningState(true);
+                terminal.innerHTML = '<p>Connecting and starting script...</p>';
+
+                const id_number = document.getElementById('id_number').value;
+                const password = document.getElementById('password').value;
+                const receiver_email = document.getElementById('receiver_email').value;
+                const license_key = document.getElementById('license_key').value;
+
+                socket.emit('start_script', { id_number, password, receiver_email, license_key });
+            });
+
+            stopButton.addEventListener('click', () => {
+                terminal.innerHTML += '<p>--- Sending stop signal... ---</p>';
+                socket.emit('stop_script');
+            });
+        });
+    </script>
+</body>
+</html>

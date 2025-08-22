@@ -1,0 +1,20 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Database file (NEVER commit your live database)
+licenses.db
+
+# IDE / OS files
+.vscode/
+.idea/
+.DS_Store
+
+# Ignore downloaded packages and browser caches
+*.deb
+*.deb.1
+*.zip
+chrome/
+chromedriver-linux64/
+LATEST_RELEASE_*

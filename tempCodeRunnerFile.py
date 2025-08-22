@@ -1,0 +1,1 @@
+til(Link("Add Another Class").exists
