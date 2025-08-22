@@ -14,7 +14,7 @@ To get started, fill your shopping cart in animo.sys with subjects you want to t
     ID_NUMBER = "12345678"
     PASSWORD = "My_password"
     PATIENCE = 1000
-    ENROLL = True
+    ENROLL = Truet
     ```
 - Step 3: Use pip to install helium (eg. pip install helium)
 - Step 4: Run script using python (eg. python script.py)
