@@ -1,5 +1,6 @@
 import os
 import argparse
+import threading
 from helium import *
 from helium._impl import sleep
 from selenium.common.exceptions import TimeoutException
@@ -180,7 +181,14 @@ def main(id_number, password, receiver_email):
                     if class_link:
                         class_name = class_link.get_text(strip=True).replace('\n', ' ')
                         print(f"--- CLASS OPEN DETECTED: {class_name} ---", flush=True)
-                        send_notification_email(class_name, url, receiver_email)
+                        
+                        # Launch email notification in a background thread
+                        email_thread = threading.Thread(
+                            target=send_notification_email,
+                            args=(class_name, url, receiver_email)
+                        )
+                        email_thread.start()
+                        
                         open_class_found = True
             
             # 5. Act based on the results of the full scan
