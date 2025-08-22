@@ -11,6 +11,9 @@ licenses.db
 .idea/
 .DS_Store
 
+# Deployment trigger file
+.deployment_trigger
+
 # Ignore downloaded packages and browser caches
 *.deb
 *.deb.1

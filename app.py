@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, url_for, redirect, session, flash
+from flask import Flask, render_template, request, url_for, redirect, session, flash, abort
 from flask_socketio import SocketIO
 import subprocess
 import os
@@ -6,10 +6,13 @@ import threading
 import time
 import datetime
 import database
+import hmac
+import hashlib
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'a_very_secret_key_for_production'
 app.config['ADMIN_PASSWORD'] = 'changethispassword' # IMPORTANT: Change this in production
+app.config['GITHUB_WEBHOOK_SECRET'] = 'a_strong_and_secret_webhook_secret' # IMPORTANT: Change this
 
 # Use eventlet for non-blocking I/O, which is crucial for streaming
 socketio = SocketIO(app, async_mode='threading', cors_allowed_origins="https://enlist.eces.ovh")
@@ -74,6 +77,32 @@ def stream_output(process, sid):
 def index():
     """Serves the main HTML page."""
     return render_template('index.html')
+
+@app.route('/webhook/deploy', methods=['POST'])
+def webhook_deploy():
+    """Receives and verifies the GitHub webhook for automated deployment."""
+    # Verify the signature
+    signature = request.headers.get('X-Hub-Signature-256')
+    if not signature:
+        abort(400, 'Signature header is missing')
+
+    sha_name, signature_hash = signature.split('=', 1)
+    if sha_name != 'sha256':
+        abort(400, 'Signature must be sha256')
+
+    mac = hmac.new(app.config['GITHUB_WEBHOOK_SECRET'].encode('utf-8'), msg=request.data, digestmod=hashlib.sha256)
+    if not hmac.compare_digest(mac.hexdigest(), signature_hash):
+        abort(403, 'Invalid signature')
+
+    # If the signature is valid, create the trigger file
+    if request.json and request.json.get('ref') == 'refs/heads/main':
+        trigger_path = os.path.join(os.path.dirname(__file__), '.deployment_trigger')
+        with open(trigger_path, 'w') as f:
+            f.write('deploy')
+        print("Deployment triggered by GitHub webhook.")
+        return 'OK', 200
+    
+    return 'Push was not to the main branch', 200
 
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
