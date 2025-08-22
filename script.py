@@ -209,21 +209,27 @@ def main(id_number, password, receiver_email):
             navigate_to_shopping_cart()
 
 def parse_shopping_cart(soup):
-    """Parses the shopping cart table from the page soup."""
+    """Parses the shopping cart table with a fixed header structure."""
     table = soup.find('table', id='SSR_REGFORM_VW$scroll$0')
     if not table:
         return []
     
-    headers = [th.get_text(strip=True).lower() for th in table.select('th[id^="thSSR_REGFORM_VW"]')]
+    # Use fixed headers as the dynamically found ones are unreliable
+    headers = ['delete', 'class', 'days/times', 'room', 'instructor', 'units', 'status']
     data = []
     rows = table.find_all('tr', id=lambda x: x and x.startswith('trSSR_REGFORM_VW$0_'))
     
     for row in rows:
         cells = row.find_all('td')
+        if len(cells) != len(headers):
+            continue # Skip malformed rows
+
         row_data = {}
-        for i, cell in enumerate(cells):
-            header = headers[i] if i < len(headers) else f'column_{i+1}'
-            if 'status' in header:
+        # Start from index 1 to skip the 'delete' column
+        for i in range(1, len(headers)):
+            header = headers[i]
+            cell = cells[i]
+            if header == 'status':
                 img = cell.find('img')
                 row_data[header] = img['alt'] if img and img.has_attr('alt') else 'N/A'
             else:
@@ -232,37 +238,30 @@ def parse_shopping_cart(soup):
     return data
 
 def parse_class_schedule(soup):
-    """Robustly finds and parses the class schedule table."""
-    try:
-        # Find the header that marks the beginning of the class schedule section
-        schedule_header = soup.find(lambda tag: tag.name in ['div', 'span'] and "My AY 2025-2026, Term 1 Class Schedule" in tag.get_text())
-        if not schedule_header:
-            return []
-        
-        # Find the first table that appears immediately after this header
-        table = schedule_header.find_next('table')
-        if not table:
-            return []
-
-        headers = ['class', 'description', 'days/times', 'room', 'instructor', 'units', 'status']
-        data = []
-        rows = table.find_all('tr', id=lambda x: x and x.startswith('trSTDNT_ENRL_SSV1$0_'))
-
-        for row in rows:
-            cells = row.find_all('td')
-            row_data = {}
-            for i, cell in enumerate(cells):
-                header = headers[i] if i < len(headers) else f'column_{i+1}'
-                if 'status' in header:
-                    img = cell.find('img')
-                    row_data[header] = img['alt'] if img and img.has_attr('alt') else 'N/A'
-                else:
-                    row_data[header] = cell.get_text(strip=True)
-            data.append(row_data)
-        return data
-    except Exception as e:
-        print(f"Error parsing class schedule: {e}", flush=True)
+    """Robustly finds and parses the class schedule table using its unique row IDs."""
+    data = []
+    # The most reliable way to find the table is by finding its unique rows
+    rows = soup.find_all('tr', id=lambda x: x and x.startswith('trSTDNT_ENRL_SSVW$0_'))
+    if not rows:
         return []
+
+    headers = ['class', 'description', 'days/times', 'room', 'instructor', 'units', 'status']
+    
+    for row in rows:
+        cells = row.find_all('td')
+        if len(cells) != len(headers):
+            continue # Skip malformed rows
+
+        row_data = {}
+        for i, cell in enumerate(cells):
+            header = headers[i]
+            if header == 'status':
+                img = cell.find('img')
+                row_data[header] = img['alt'] if img and img.has_attr('alt') else 'N/A'
+            else:
+                row_data[header] = cell.get_text(strip=True, separator=' ')
+        data.append(row_data)
+    return data
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='AnimoSys Auto-Enlister')

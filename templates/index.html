@@ -157,8 +157,8 @@
             });
 
             socket.on('update_tables', (data) => {
-                renderTable(shoppingCartTable, data.shopping_cart);
-                renderTable(classScheduleTable, data.class_schedule);
+                renderTable(shoppingCartTable, data.shopping_cart, ['class', 'days/times', 'room', 'instructor', 'units', 'status']);
+                renderTable(classScheduleTable, data.class_schedule, ['class', 'description', 'days/times', 'room', 'instructor', 'units', 'status']);
             });
 
             socket.on('license_status', (data) => {
@@ -194,13 +194,12 @@
                 socket.emit('stop_script');
             });
 
-            function renderTable(container, data) {
+            function renderTable(container, data, headers) {
                 if (!data || data.length === 0) {
                     container.innerHTML = '<p>No data to display.</p>';
                     return;
                 }
 
-                const headers = Object.keys(data[0]);
                 let tableHtml = '<table style="width: 100%; border-collapse: collapse;"><thead><tr>';
                 headers.forEach(header => {
                     tableHtml += `<th style="border: 1px solid #ccc; padding: 8px; text-align: left;">${header.replace(/_/g, ' ').toUpperCase()}</th>`;
