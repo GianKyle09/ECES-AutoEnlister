@@ -1,6 +1,7 @@
 import os
 import argparse
 import threading
+import json
 from helium import *
 from helium._impl import sleep
 from selenium.common.exceptions import TimeoutException
@@ -158,38 +159,33 @@ def main(id_number, password, receiver_email):
             # 2. Get a static snapshot of the page's HTML for stable parsing
             soup = BeautifulSoup(get_driver().page_source, 'html.parser')
             
-            # 3. Find all rows in the main shopping cart table
-            cart_table = soup.find('table', id='SSR_REGFORM_VW$scroll$0')
-            if not cart_table:
-                print("Could not find the main shopping cart table. Refreshing...", flush=True)
-                navigate_to_shopping_cart()
-                continue
+            # 3. Parse both tables
+            shopping_cart_data = parse_table(soup, 'SSR_REGFORM_VW$scroll$0')
+            class_schedule_data = parse_table(soup, 'STDNT_ENRL_SSV1$scroll$0')
 
-            rows = cart_table.find_all('tr', id=lambda x: x and x.startswith('trSSR_REGFORM_VW$0_'))
+            # 4. Send the structured data to the frontend
+            table_data = {
+                "shopping_cart": shopping_cart_data,
+                "class_schedule": class_schedule_data
+            }
+            # Use a special prefix to distinguish this data from normal logs
+            print(f"JSON_DATA::{json.dumps(table_data)}", flush=True)
+
+            # 5. Check for open classes in the parsed shopping cart data
             open_class_found = False
-
-            if not rows:
-                print("No class rows found in cart table. Refreshing...", flush=True)
-                navigate_to_shopping_cart()
-                continue
-
-            # 4. Analyze each row for class name and status
-            for row in rows:
-                open_image = row.find('img', alt='Open')
-                if open_image:
-                    class_link = row.find('a', id=lambda x: x and x.startswith('P_CLASS_NAME$'))
-                    if class_link:
-                        class_name = class_link.get_text(strip=True).replace('\n', ' ')
-                        print(f"--- CLASS OPEN DETECTED: {class_name} ---", flush=True)
-                        
-                        # Launch email notification in a background thread
-                        email_thread = threading.Thread(
-                            target=send_notification_email,
-                            args=(class_name, url, receiver_email)
-                        )
-                        email_thread.start()
-                        
-                        open_class_found = True
+            for course in shopping_cart_data:
+                if course.get('status') == 'Open':
+                    class_name = course.get('class', 'Unknown Class')
+                    print(f"--- CLASS OPEN DETECTED: {class_name} ---", flush=True)
+                    
+                    # Launch email notification in a background thread
+                    email_thread = threading.Thread(
+                        target=send_notification_email,
+                        args=(class_name, url, receiver_email)
+                    )
+                    email_thread.start()
+                    
+                    open_class_found = True
             
             # 5. Act based on the results of the full scan
             if open_class_found and ENROLL:
@@ -211,6 +207,33 @@ def main(id_number, password, receiver_email):
         except TimeoutException:
             print("A timeout occurred. Resetting navigation...", flush=True)
             navigate_to_shopping_cart()
+
+def parse_table(soup, table_id):
+    """Parses a specific table from the page soup into a list of dictionaries."""
+    table = soup.find('table', id=table_id)
+    if not table:
+        return []
+
+    headers = [th.get_text(strip=True) for th in table.find_all('th')]
+    data = []
+    
+    # Find all data rows, which have a specific ID structure
+    rows = table.find_all('tr', id=lambda x: x and x.startswith('tr' + table_id.split('$')[0]))
+    
+    for row in rows:
+        cells = row.find_all('td')
+        row_data = {}
+        for i, cell in enumerate(cells):
+            header = headers[i] if i < len(headers) else f'column_{i+1}'
+            # Special handling for the status column to get the alt text from the image
+            if 'Status' in header:
+                img = cell.find('img')
+                row_data[header.lower()] = img['alt'] if img and img.has_attr('alt') else 'N/A'
+            else:
+                row_data[header.lower()] = cell.get_text(strip=True)
+        data.append(row_data)
+        
+    return data
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='AnimoSys Auto-Enlister')

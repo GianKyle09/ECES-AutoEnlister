@@ -8,6 +8,7 @@ import datetime
 import database
 import hmac
 import hashlib
+import json
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'a_very_secret_key_for_production'
@@ -56,10 +57,22 @@ def license_manager():
             time.sleep(1) # Check every second for a responsive timer
 
 def stream_output(process, sid):
-    """Reads output from the process and streams it to the client."""
+    """Reads output, routes it as logs or table data, and streams to the client."""
     try:
         for line in iter(process.stdout.readline, ''):
-            socketio.emit('terminal_output', {'data': line.strip()}, room=sid)
+            line = line.strip()
+            if line.startswith('JSON_DATA::'):
+                try:
+                    # This is our special structured data
+                    json_str = line.split('::', 1)[1]
+                    data = json.loads(json_str)
+                    socketio.emit('update_tables', data, room=sid)
+                except (json.JSONDecodeError, IndexError) as e:
+                    print(f"Error decoding JSON from script: {e}")
+            else:
+                # This is a normal log message
+                socketio.emit('terminal_output', {'data': line}, room=sid)
+        
         process.stdout.close()
         return_code = process.wait()
         socketio.emit('script_finished', {'code': return_code}, room=sid)
