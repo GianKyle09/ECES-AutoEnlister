@@ -116,78 +116,70 @@ def navigate_to_shopping_cart():
         sleep(TIMEOUT)
         return False
 
+def startup_and_login(id_number, password):
+    """Launches a new browser instance, logs in, and returns True on success."""
+    try:
+        print("--- LAUNCHING NEW BROWSER INSTANCE ---", flush=True)
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument(f'--user-data-dir=/tmp/selenium_{os.getpid()}')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--log-level=3')
+        options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        
+        service = ChromeService(executable_path='/var/www/home/.cache/selenium/chromedriver/linux64/139.0.7258.138/chromedriver')
+        driver = Chrome(service=service, options=options)
+        set_driver(driver)
+        go_to(url)
+
+        print("Logging into AnimoSys...", flush=True)
+        wait_until(Button('Sign In').exists, timeout_secs=PATIENCE)
+        write(id_number, into="User ID:")
+        write(password, into="Password:")
+        click("Sign In")
+        print("Login successful.", flush=True)
+        wait_until(Link("Self Service").exists, timeout_secs=PATIENCE)
+        return True
+    except Exception as e:
+        print(f"--- FATAL ERROR DURING STARTUP: {e} ---", flush=True)
+        return False
+
 def main(id_number, password, receiver_email):
     """The main function to run the scraper."""
-    # Configure Chrome options for a quieter, more stable headless operation
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--no-sandbox') # Essential for running as a non-root user like www-data
-    options.add_argument('--disable-dev-shm-usage') # Overcomes resource limitations in a server environment
-    options.add_argument(f'--user-data-dir=/tmp/selenium_{os.getpid()}') # Creates a unique data dir for each run
-    options.add_argument('--disable-gpu')
-    options.add_argument('--log-level=3')
-    options.add_experimental_option('excludeSwitches', ['enable-logging'])
-
-    
-    # Explicitly point to the system's installed chromedriver
-    service = ChromeService(executable_path='/var/www/home/.cache/selenium/chromedriver/linux64/139.0.7258.138/chromedriver')
-    driver = Chrome(service=service, options=options)
-    set_driver(driver)
-    go_to(url)
-
-
-    # login into Animosys
-    print("Logging into AnimoSys...", flush=True)
-    wait_until(Button('Sign In').exists, timeout_secs=PATIENCE)
-    write(id_number, into="User ID:")
-    write(password, into="Password:")
-    click("Sign In")
-    print("Login successful.", flush=True)
-
-    wait_until(Link("Self Service").exists, timeout_secs=PATIENCE)
+    if not startup_and_login(id_number, password):
+        return # Exit if the initial startup fails
 
     # --- Initial Navigation ---
     navigate_to_shopping_cart()
 
-    # --- Main Class Sniper Loop (BeautifulSoup Implementation) ---
+    # --- Main Self-Healing Sniper Loop ---
     while True:
         try:
             # 1. Verify we are on the correct page.
             wait_until(Text("AY 2025-2026, Term 1 Shopping Cart").exists, timeout_secs=15)
             print(f"Checking for open classes... (Last check: {datetime.now().strftime('%I:%M:%S %p')})", flush=True)
 
-            # 2. Get a static snapshot of the page's HTML for stable parsing
             soup = BeautifulSoup(get_driver().page_source, 'html.parser')
-            
-            # 3. Parse both tables
             shopping_cart_data = parse_shopping_cart(soup)
             class_schedule_data = parse_class_schedule(soup)
 
-            # 4. Send the structured data to the frontend
             table_data = {
                 "shopping_cart": shopping_cart_data,
                 "class_schedule": class_schedule_data
             }
-            # Use a special prefix to distinguish this data from normal logs
             print(f"JSON_DATA::{json.dumps(table_data)}", flush=True)
 
-            # 5. Check for open classes in the parsed shopping cart data
             open_class_found = False
             for course in shopping_cart_data:
                 if course.get('status') == 'Open':
                     class_name = course.get('class', 'Unknown Class')
                     print(f"--- CLASS OPEN DETECTED: {class_name} ---", flush=True)
-                    
-                    # Launch email notification in a background thread
-                    email_thread = threading.Thread(
-                        target=send_notification_email,
-                        args=(class_name, url, receiver_email)
-                    )
+                    email_thread = threading.Thread(target=send_notification_email, args=(class_name, url, receiver_email))
                     email_thread.start()
-                    
                     open_class_found = True
             
-            # 5. Act based on the results of the full scan
             if open_class_found and ENROLL:
                 print("Proceeding with enrollment...", flush=True)
                 wait_until(Link("Proceed to Step 2 of 3").exists, timeout_secs=PATIENCE)
@@ -205,8 +197,19 @@ def main(id_number, password, receiver_email):
                 navigate_to_shopping_cart()
 
         except TimeoutException:
-            print("A timeout occurred. Resetting navigation...", flush=True)
+            # Tier 1 Recovery: Graceful navigation reset
+            print("A simple timeout occurred. Resetting navigation...", flush=True)
             navigate_to_shopping_cart()
+        except Exception as e:
+            # Tier 2 Recovery: Catastrophic browser failure
+            print(f"--- CATASTROPHIC FAILURE DETECTED: {e} ---", flush=True)
+            print("--- ATTEMPTING FULL BROWSER RESTART ---", flush=True)
+            kill_browser()
+            if startup_and_login(id_number, password):
+                navigate_to_shopping_cart()
+            else:
+                print("--- FAILED TO RESTART BROWSER. SCRIPT WILL EXIT. ---", flush=True)
+                break # Exit the loop if restart fails
 
 def parse_shopping_cart(soup):
     """Parses the shopping cart table with a fixed header structure."""

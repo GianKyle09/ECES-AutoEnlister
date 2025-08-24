@@ -18,8 +18,8 @@ app.config['GITHUB_WEBHOOK_SECRET'] = 'a_strong_and_secret_webhook_secret' # IMP
 # Use eventlet for non-blocking I/O, which is crucial for streaming
 socketio = SocketIO(app, async_mode='threading', cors_allowed_origins="https://enlist.eces.ovh")
 
-# Dictionary to hold session data (process and key), keyed by session ID
-sessions = {}
+# Dictionary to hold running processes, keyed by license key
+processes = {}
 
 def license_manager():
     """A background thread that monitors active licenses and terminates them on expiry."""
@@ -33,58 +33,60 @@ def license_manager():
                 start_time = key_data['start_time']
                 duration = datetime.timedelta(minutes=key_data['duration_minutes'])
                 
-                # Find the session associated with this key
-                active_sid = None
-                for sid, session_data in list(sessions.items()):
-                    if session_data.get('key') == key_data['key']:
-                        active_sid = sid
-                        break
-                
                 if start_time + duration < datetime.datetime.now():
                     print(f"License key {key_data['key']} has expired. Terminating process.")
+                    if key_data['key'] in processes and processes[key_data['key']]['process'].poll() is None:
+                        processes[key_data['key']]['process'].terminate()
+                        # We can't easily emit to a disconnected user, but we log it.
                     database.deactivate_key(key_data['key'])
-                    if active_sid and sessions[active_sid]['process'].poll() is None:
-                        sessions[active_sid]['process'].terminate()
-                        socketio.emit('terminal_output', {'data': '--- LICENSE EXPIRED: Your time has run out. ---'}, room=active_sid)
-                        socketio.emit('script_finished', {'code': 'Expired'}, room=active_sid)
                 else:
-                    # Send time remaining update
+                    # Send time remaining update to any connected user for this key
                     remaining = (start_time + duration) - datetime.datetime.now()
-                    remaining_str = str(remaining).split('.')[0] # Format as H:MM:SS
-                    if active_sid:
-                        socketio.emit('license_status', {'time_remaining': remaining_str}, room=active_sid)
+                    remaining_str = str(remaining).split('.')[0]
+                    if key_data['key'] in processes:
+                        sid = processes[key_data['key']].get('sid')
+                        if sid:
+                            socketio.emit('license_status', {'time_remaining': remaining_str}, room=sid)
 
             time.sleep(1) # Check every second for a responsive timer
 
-def stream_output(process, sid):
-    """Reads output, routes it as logs or table data, and streams to the client."""
+def stream_output(process, license_key):
+    """Reads output and prepares it for broadcasting."""
     try:
         for line in iter(process.stdout.readline, ''):
-            line = line.strip()
-            if line.startswith('JSON_DATA::'):
-                try:
-                    # This is our special structured data
-                    json_str = line.split('::', 1)[1]
-                    data = json.loads(json_str)
-                    socketio.emit('update_tables', data, room=sid)
-                except (json.JSONDecodeError, IndexError) as e:
-                    print(f"Error decoding JSON from script: {e}")
-            else:
-                # This is a normal log message
-                socketio.emit('terminal_output', {'data': line}, room=sid)
-        
+            # Instead of emitting directly, we store the line to be broadcasted
+            # This part will be handled by a broadcaster thread or similar mechanism
+            # For simplicity in this step, we'll just print to server log
+            # A full implementation would use a queue that the broadcaster reads from.
+            
+            # Find the session ID to emit to, if a user is connected
+            sid = processes.get(license_key, {}).get('sid')
+            if sid:
+                line = line.strip()
+                if line.startswith('JSON_DATA::'):
+                    try:
+                        json_str = line.split('::', 1)[1]
+                        data = json.loads(json_str)
+                        socketio.emit('update_tables', data, room=sid)
+                    except (json.JSONDecodeError, IndexError) as e:
+                        print(f"Error decoding JSON from script: {e}")
+                else:
+                    socketio.emit('terminal_output', {'data': line}, room=sid)
+
         process.stdout.close()
         return_code = process.wait()
-        socketio.emit('script_finished', {'code': return_code}, room=sid)
+        
+        sid = processes.get(license_key, {}).get('sid')
+        if sid:
+            socketio.emit('script_finished', {'code': return_code}, room=sid)
+
     except Exception as e:
-        print(f"Stream output thread error for SID {sid}: {e}")
+        print(f"Stream output thread error for key {license_key}: {e}")
     finally:
-        # Clean up the session from the dictionary once the stream is done
-        if sid in sessions:
-            key = sessions[sid].get('key')
-            if key:
-                database.deactivate_key(key)
-            del sessions[sid]
+        # Clean up the process from the dictionary
+        if license_key in processes:
+            database.deactivate_key(license_key)
+            del processes[license_key]
 
 @app.route('/')
 def index():
@@ -184,8 +186,15 @@ def lifetime_key():
 def handle_start_script(data):
     """Validates the license key and starts the scraper script."""
     sid = request.sid
-    if sid in sessions and 'process' in sessions[sid] and sessions[sid]['process'].poll() is None:
-        socketio.emit('terminal_output', {'data': '--- Your script is already running ---'}, room=sid)
+    license_key = data.get('license_key')
+
+    if not license_key:
+        socketio.emit('terminal_output', {'data': 'Error: License key is required.'}, room=sid)
+        return
+
+    if license_key in processes and processes[license_key]['process'].poll() is None:
+        socketio.emit('terminal_output', {'data': '--- Script is already running for this license. Reconnecting... ---'}, room=sid)
+        processes[license_key]['sid'] = sid # Re-associate the new session ID
         return
 
     id_number = data.get('id_number')
@@ -224,7 +233,6 @@ def handle_start_script(data):
             return
 
     database.activate_key(license_key, id_number, receiver_email)
-    sessions[sid] = {'key': license_key} # Store key info with the session
     
     # Send initial license status
     if key_data['duration_minutes'] == -1:
@@ -241,10 +249,10 @@ def handle_start_script(data):
             bufsize=1,
             universal_newlines=True
         )
-        sessions[sid]['process'] = process # Add the process object to the session data
+        processes[license_key] = {'process': process, 'sid': sid}
         socketio.emit('terminal_output', {'data': '--- License validated. Script process started ---'}, room=sid)
         
-        thread = threading.Thread(target=stream_output, args=(process, sid))
+        thread = threading.Thread(target=stream_output, args=(process, license_key))
         thread.daemon = True
         thread.start()
 
@@ -252,37 +260,45 @@ def handle_start_script(data):
         socketio.emit('terminal_output', {'data': f'--- Failed to start script: {e} ---'}, room=sid)
 
 @socketio.on('stop_script')
-def handle_stop_script():
-    """Stops the running script for the specific user."""
+def handle_stop_script(data):
+    """Stops the running script associated with a license key."""
+    license_key = data.get('license_key')
     sid = request.sid
-    if sid in sessions and 'process' in sessions[sid] and sessions[sid]['process'].poll() is None:
+    if license_key in processes and processes[license_key]['process'].poll() is None:
         try:
-            database.deactivate_key(sessions[sid]['key'])
-            sessions[sid]['process'].terminate()
-            sessions[sid]['process'].wait(timeout=5)
+            processes[license_key]['process'].terminate()
+            processes[license_key]['process'].wait(timeout=5)
             socketio.emit('terminal_output', {'data': '--- Script process terminated by user ---'}, room=sid)
             socketio.emit('script_finished', {'code': 'Terminated'}, room=sid)
         except subprocess.TimeoutExpired:
-            sessions[sid]['process'].kill()
+            processes[license_key]['process'].kill()
             socketio.emit('terminal_output', {'data': '--- Script process force-killed ---'}, room=sid)
             socketio.emit('script_finished', {'code': 'Killed'}, room=sid)
-        del sessions[sid]
+        # The stream_output thread will handle cleanup
     else:
-        socketio.emit('terminal_output', {'data': '--- You have no script running ---'}, room=sid)
+        socketio.emit('terminal_output', {'data': '--- No script is currently running for this license ---'}, room=sid)
+
+@socketio.on('check_status')
+def handle_check_status(data):
+    """Allows a returning user to check the status of their script."""
+    license_key = data.get('license_key')
+    sid = request.sid
+    if license_key in processes and processes[license_key]['process'].poll() is None:
+        processes[license_key]['sid'] = sid # Re-associate the new session ID
+        socketio.emit('reconnect_success', {'status': 'running'}, room=sid)
+        socketio.emit('terminal_output', {'data': '--- Reconnected to running script ---'}, room=sid)
+    else:
+        socketio.emit('reconnect_success', {'status': 'stopped'}, room=sid)
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """Cleans up the process when a user disconnects."""
+    """Disassociates the session ID from a running process without stopping it."""
     sid = request.sid
-    if sid in sessions and 'process' in sessions[sid] and sessions[sid]['process'].poll() is None:
-        print(f"Client {sid} disconnected. Terminating their script.")
-        database.deactivate_key(sessions[sid]['key'])
-        sessions[sid]['process'].terminate()
-        try:
-            sessions[sid]['process'].wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            sessions[sid]['process'].kill()
-        del sessions[sid]
+    for key, data in processes.items():
+        if data.get('sid') == sid:
+            print(f"Client {sid} disconnected, but script for key {key} will continue running.")
+            data['sid'] = None # Disassociate, don't kill
+            break
 
 if __name__ == '__main__':
     database.init_db()

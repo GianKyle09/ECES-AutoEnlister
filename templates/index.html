@@ -146,7 +146,20 @@
 
             socket.on('connect', () => {
                 console.log('Connected to server');
-                terminal.innerHTML += '<p>Successfully connected to the server.</p>';
+                terminal.innerHTML = '<p>Successfully connected to the server.</p>';
+                // Check for a running script on page load
+                const license_key = document.getElementById('license_key').value;
+                if (license_key) {
+                    socket.emit('check_status', { license_key });
+                }
+            });
+
+            socket.on('reconnect_success', (data) => {
+                if (data.status === 'running') {
+                    setRunningState(true);
+                } else {
+                    setRunningState(false);
+                }
             });
 
             socket.on('terminal_output', (msg) => {
@@ -190,8 +203,13 @@
             });
 
             stopButton.addEventListener('click', () => {
+                const license_key = document.getElementById('license_key').value;
+                if (!license_key) {
+                    terminal.innerHTML += '<p>--- ERROR: Please enter a license key to stop the script. ---</p>';
+                    return;
+                }
                 terminal.innerHTML += '<p>--- Sending stop signal... ---</p>';
-                socket.emit('stop_script');
+                socket.emit('stop_script', { license_key });
             });
 
             function renderTable(container, data, headers) {
